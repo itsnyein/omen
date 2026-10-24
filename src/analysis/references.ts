@@ -1,6 +1,7 @@
 import {
   Node,
   SyntaxKind,
+  type Identifier,
   type ReferencedSymbol,
   type SourceFile,
 } from "ts-morph";
@@ -162,7 +163,130 @@ function collectForSeed(
 
   const target = targetSpansOf(callable, searchNode);
 
-  collectFromDeclaration(searchNode, target, seed, snapshot, repoRoot, buckets);
+  const exported = collectFromDeclaration(
+    searchNode,
+    target,
+    seed,
+    snapshot,
+    repoRoot,
+    buckets,
+  );
+  // Only for a callable the module actually exports through CommonJS. An ESM seed has
+  // nothing to find here, and walking every file for it would be cost with no answer.
+  if (exported) {
+    collectCommonJsCallers(seed, callable, snapshot, repoRoot, buckets);
+  }
+}
+
+/**
+ * CommonJS call sites, found by scanning candidates rather than by a reference search.
+ *
+ * **A reference search cannot find these.** `module.exports = { greet }` creates a
+ * property whose symbol is distinct from the function's, and `findReferences` over either
+ * one returns only same-file results — verified on the approved fixture with full module
+ * resolution. Every CommonJS call site therefore arrived unexplained, which is why this
+ * needs a second mechanism rather than a second search.
+ *
+ * The mechanism: in files that `require` a literal specifier, every identifier spelled
+ * like the seed is a **candidate**, and the compiler's go-to-definition decides. That is
+ * deliberately not how the differential check works — it resolves symbols and follows
+ * alias chains itself — so the two remain independent methods rather than one oracle
+ * consulted twice (§10). An agreement test ties them.
+ *
+ * The `require` test is a **cost filter, not the correctness argument**: a file with no
+ * literal `require` cannot reach a CommonJS export, and skipping it avoids walking every
+ * file in the project for every seed. Correctness comes from the definition check below,
+ * which is why a same-named identifier in a requiring file is still rejected.
+ */
+function collectCommonJsCallers(
+  seed: Seed,
+  callable: Callable,
+  snapshot: SnapshotReferences,
+  repoRoot: string,
+  buckets: Buckets,
+): void {
+  const seedFile = callable.declaration.getSourceFile();
+  const seen = new Set(
+    [...buckets.usages, ...buckets.filtered].map(
+      (record) => `${record.filePath}:${String(record.pos)}`,
+    ),
+  );
+
+  for (const file of snapshot.sourceFiles) {
+    // Same-file uses are already covered by the reference search over the declaration.
+    if (file === seedFile) continue;
+    if (!requiresByLiteral(file)) continue;
+
+    for (const node of file.getDescendants()) {
+      if (!Node.isIdentifier(node) || node.getText() !== callable.name)
+        continue;
+      const site = siteOf(node, repoRoot);
+      const key = `${site.filePath}:${String(site.pos)}`;
+      if (seen.has(key)) continue;
+
+      const parent = node.getParent();
+      // `const { greet } = require(…)` is the CommonJS spelling of an import specifier,
+      // and §9 filters those. Its definition is the export property rather than the
+      // function, so it would fail the check below and vanish silently.
+      if (Node.isBindingElement(parent)) {
+        seen.add(key);
+        buckets.filtered.push({
+          seedKey: seed.key,
+          reason: "import-specifier",
+          ...site,
+        });
+        continue;
+      }
+
+      if (!definitionReaches(node, callable)) continue;
+      seen.add(key);
+      buckets.usages.push({
+        seedKey: seed.key,
+        relation: relationOf(node),
+        from: fromOf(node, snapshot, site.filePath),
+        // `exact`: go-to-definition landed inside the seed's own declaration. There is
+        // no second candidate to be ambiguous between.
+        resolution: { status: "exact" },
+        ...site,
+      });
+    }
+  }
+}
+
+/** Whether a file contains `require("<literal>")` at all. A cost filter only. */
+function requiresByLiteral(file: SourceFile): boolean {
+  return file.getDescendants().some((node) => {
+    if (!Node.isCallExpression(node)) return false;
+    const callee = node.getExpression();
+    if (!Node.isIdentifier(callee) || callee.getText() !== "require") {
+      return false;
+    }
+    const [argument] = node.getArguments();
+    return argument !== undefined && Node.isStringLiteral(argument);
+  });
+}
+
+/**
+ * Whether go-to-definition from this identifier lands inside the seed's declaration.
+ *
+ * Deliberately the language service rather than a symbol walk: it already follows the
+ * CommonJS export property back to the function, which is the step a symbol chain has to
+ * be taught. The differential check does teach it, separately, and the agreement test is
+ * what holds the two answers together.
+ */
+function definitionReaches(node: Identifier, callable: Callable): boolean {
+  const declaration = callable.declaration;
+  const file = declaration.getSourceFile().getFilePath();
+  const start = declaration.getStart();
+  const end = declaration.getEnd();
+  return node
+    .getDefinitionNodes()
+    .some(
+      (definition) =>
+        definition.getSourceFile().getFilePath() === file &&
+        definition.getStart() >= start &&
+        definition.getEnd() <= end,
+    );
 }
 
 function collectFromDeclaration(
@@ -172,7 +296,8 @@ function collectFromDeclaration(
   snapshot: SnapshotReferences,
   repoRoot: string,
   buckets: Buckets,
-): void {
+): boolean {
+  let exported = false;
   for (const group of searchNode.findReferences()) {
     const resolution = resolutionOf(group, target, repoRoot);
     for (const entry of group.getReferences()) {
@@ -197,11 +322,24 @@ function collectFromDeclaration(
       // and report a different reason for one of three spellings of the same thing
       // (§15b). It is also the handle the second pass searches from.
       if (isCommonJsExport(node)) {
+        exported = true;
         buckets.filtered.push({
           seedKey: seed.key,
           reason: "export-specifier",
           ...site,
         });
+        // The name on the **left** of `module.exports.alpha = alpha` is part of the same
+        // export, and the reference search does not return it — only the right-hand
+        // side. Left unfiltered it stays an occurrence that resolves to the seed and
+        // nothing explains, which would keep these fixtures out of the sweep forever.
+        const exportName = exportTargetNameNode(node);
+        if (exportName !== undefined) {
+          buckets.filtered.push({
+            seedKey: seed.key,
+            reason: "export-specifier",
+            ...siteOf(exportName, repoRoot),
+          });
+        }
         continue;
       }
 
@@ -219,8 +357,9 @@ function collectFromDeclaration(
       });
     }
   }
-}
 
+  return exported;
+}
 /**
  * Whether this reference is one of the three CommonJS export spellings (§6.3).
  *
@@ -234,6 +373,9 @@ function isCommonJsExport(node: Node): boolean {
   const parent = node.getParent();
   if (parent === undefined) return false;
 
+  // The object literal must be assigned **directly** to the export target. Its parent
+  // chain is literal → assignment; anything else means the literal is an argument, a
+  // return value, or nested deeper, and §15b does not follow it there.
   if (Node.isShorthandPropertyAssignment(parent)) {
     return isCommonJsExportTarget(parent.getParent().getParent());
   }
@@ -252,6 +394,25 @@ function isCommonJsExport(node: Node): boolean {
     );
   }
   return false;
+}
+
+/**
+ * The property name on the left of `module.exports.x = fn`, when there is one.
+ *
+ * `module.exports = { fn }` has no separate name — the shorthand is both — so this
+ * returns nothing for it.
+ */
+function exportTargetNameNode(node: Node): Node | undefined {
+  const parent = node.getParent();
+  if (
+    parent === undefined ||
+    !Node.isBinaryExpression(parent) ||
+    parent.getRight() !== node
+  ) {
+    return undefined;
+  }
+  const left = parent.getLeft();
+  return Node.isPropertyAccessExpression(left) ? left.getNameNode() : undefined;
 }
 
 /** Whether a node is the `module.exports = …` assignment an object literal belongs to. */
@@ -274,6 +435,10 @@ function isCommonJsExportTarget(node: Node | undefined): boolean {
  */
 function isExportsRoot(node: Node): boolean {
   if (Node.isIdentifier(node)) return node.getText() === "exports";
+  // **Property access only.** `module.exports[name] = fn` is an element access, and a
+  // computed key names no export nidan can report — the same reason a computed member
+  // access does not resolve (§15b). Excluded by node kind rather than by a check, so
+  // there is no condition to forget.
   if (!Node.isPropertyAccessExpression(node)) return false;
   const object = node.getExpression();
   if (Node.isIdentifier(object) && object.getText() === "module") {
