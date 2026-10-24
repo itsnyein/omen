@@ -154,8 +154,21 @@ function actualUsages(result: ReferenceResult): string[] {
  */
 const PENDING_FIXTURES = new Map<
   string,
-  { usages: string[]; unexplained: string[] }
+  {
+    usages: string[];
+    unexplained: string[];
+    /** Set when the fixture still satisfies the repository-wide unexplained sweep. */
+    inSweep?: true;
+  }
 >([
+  // The proposal fixture. It stays in the unexplained sweep: with no usages reported and
+  // the only textual traces being a string, a parenthesis and a type annotation, the
+  // sweep is correct to be silent — which is the problem the proposal describes, not a
+  // reason to exempt the case from it.
+  [
+    "gap-computed-member-access",
+    { usages: [], unexplained: [], inSweep: true },
+  ],
   [
     "usage-commonjs-require",
     {
@@ -221,6 +234,9 @@ describe("usages against the frozen fixtures", () => {
     expect(
       declaring.filter((name) => expectedUsages(name)?.length === 0),
     ).toEqual([
+      // Records `"usages": []` because all four spellings are undiscovered — the empty
+      // list is the assertion the proposal is about.
+      "gap-computed-member-access",
       "identity-default-exports",
       "identity-nested-static-collision",
       "identity-static-vs-instance",
@@ -240,7 +256,13 @@ describe("usages against the frozen fixtures", () => {
     TIMEOUT_MS,
   );
 
-  it.each(names.filter((name) => !PENDING_FIXTURES.has(name)))(
+  it.each(
+    names.filter(
+      (name) =>
+        PENDING_FIXTURES.get(name)?.inSweep !== undefined ||
+        !PENDING_FIXTURES.has(name),
+    ),
+  )(
     "%s leaves no occurrence of a seed name unexplained",
     async (name) => {
       const outcome = await analyze(join("tests", "fixtures", name));

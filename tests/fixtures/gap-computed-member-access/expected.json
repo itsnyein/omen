@@ -1,0 +1,41 @@
+{
+  "description": "PROPOSAL, awaiting a ruling: a computed member access whose key is not statically resolvable but whose receiver type carries the seed's member emits a computed-member-access gap instead of silently producing nothing.",
+  "expect": {
+    "run": { "status": "ok", "analysisMode": "tsconfig", "reasons": [] },
+    "seeds": [
+      {
+        "key": "src/client.ts :: Client :: method :: send",
+        "change": "modified",
+        "usages": [],
+        "valueReferences": [],
+        "gaps": [
+          {
+            "kind": "computed-member-access",
+            "snapshot": "head",
+            "site": { "file": "src/use.ts", "line": 5 },
+            "expression": "client[key]",
+            "relatedSeed": "src/client.ts :: Client :: method :: send",
+            "reasonCode": "key-not-statically-resolved"
+          },
+          {
+            "kind": "computed-member-access",
+            "snapshot": "head",
+            "site": { "file": "src/use.ts", "line": 9 },
+            "expression": "client[(\"send\")]",
+            "relatedSeed": "src/client.ts :: Client :: method :: send",
+            "reasonCode": "key-not-statically-resolved"
+          },
+          {
+            "kind": "computed-member-access",
+            "snapshot": "head",
+            "site": { "file": "src/use.ts", "line": 13 },
+            "expression": "client[key]",
+            "relatedSeed": "src/client.ts :: Client :: method :: send",
+            "reasonCode": "key-not-statically-resolved"
+          }
+        ]
+      }
+    ],
+    "repoWideGaps": []
+  }
+}
