@@ -190,13 +190,6 @@ const PENDING_FIXTURES = new Map<
     "usage-value-reference-anonymous-default",
     { usages: [], unexplained: [], inSweep: true },
   ],
-  [
-    "usage-commonjs-require",
-    {
-      usages: [],
-      unexplained: ["src/use.js:2", "src/use.js:5", "src/use.js:9"],
-    },
-  ],
   // Dispatch and untyped-receiver gaps are unimplemented. The two dispatch cases already
   // classify correctly and explain every occurrence — they are pinning an absent gap, not
   // a miss — so they stay in the repository-wide sweep. Only the untyped case opts out,
@@ -229,21 +222,6 @@ const PENDING_FIXTURES = new Map<
         "src/client.ts :: Client :: method :: send | invoke | src/use.ts :: :: function :: typed | src/use.ts:4 | exact",
       ],
       unexplained: ["src/use.ts:8"],
-    },
-  ],
-  [
-    "usage-commonjs-exports",
-    {
-      // No usages at all now: the three export spellings are filtered rather than
-      // reported as value references. The call sites stay unexplained until the
-      // candidate scan lands, which is what removes this entry and the sweep opt-out.
-      usages: [],
-      unexplained: [
-        "src/lib.js:13",
-        "src/lib.js:14",
-        "src/use.js:4",
-        "src/use.js:4",
-      ],
     },
   ],
 ]);
@@ -366,6 +344,170 @@ describe("the four equivalence variants agree", () => {
       ]);
     },
     TIMEOUT_MS * 4,
+  );
+});
+
+/**
+ * Every way a CommonJS caller can name the seed, and whether it reaches it.
+ *
+ * The third agreement table, for the third rule with two independent implementations.
+ * The analyzer asks the **language service** (go-to-definition); the differential check
+ * walks **symbols** and follows alias chains itself. Neither consults the other, which is
+ * the point — a check sharing the analyzer's resolution could not catch a bug in it
+ * (§10) — and only a table keeps the two answers from drifting.
+ *
+ * `line` is a line of the source below. Keep them in step.
+ */
+const COMMONJS_SHAPES = [
+  { line: 6, shape: "namespace member call", reachesSeed: true },
+  { line: 10, shape: "destructured binding call", reachesSeed: true },
+  { line: 14, shape: "same name, different module", reachesSeed: false },
+  { line: 18, shape: "same name, local declaration", reachesSeed: false },
+  // A renamed destructuring. The call is spelled `hi`, so neither side can find it by
+  // the seed's name — both have to learn the local binding, separately.
+  { line: 27, shape: "renamed destructured binding call", reachesSeed: true },
+] as const;
+
+const COMMONJS_CASE = {
+  "src/seed.js":
+    "function send() {\n  return 'a';\n}\n\nmodule.exports = { send };\n",
+  "src/other.js":
+    "function send() {\n  return 'elsewhere';\n}\n\nmodule.exports = { send };\n",
+  "src/use.js":
+    'const seed = require("./seed.js");\n' +
+    'const other = require("./other.js");\n' +
+    'const { send } = require("./seed.js");\n' +
+    "\n" +
+    "function viaNamespace() {\n  return seed.send();\n}\n" +
+    "\n" +
+    "function viaDestructured() {\n  return send();\n}\n" +
+    "\n" +
+    "function viaOtherModule() {\n  return other.send();\n}\n" +
+    "\n" +
+    "function viaLocal() {\n  function send() {\n    return 'local';\n  }\n  return send();\n}\n" +
+    "\n" +
+    'const { send: dispatch } = require("./seed.js");\n' +
+    "\n" +
+    "function viaRenamed() {\n  return dispatch();\n}\n" +
+    "\n" +
+    "module.exports = {\n  viaNamespace,\n  viaDestructured,\n  viaOtherModule,\n  viaLocal,\n  viaRenamed,\n};\n",
+};
+
+describe("the analyzer and the differential check agree on CommonJS callers", () => {
+  it(
+    "reaches the seed from exactly the same call sites, on both sides",
+    async () => {
+      const outcome = await analyze(
+        await throwawayCase(
+          {
+            base: COMMONJS_CASE,
+            head: {
+              ...COMMONJS_CASE,
+              "src/seed.js": COMMONJS_CASE["src/seed.js"].replace(
+                "return 'a';",
+                "return 'a'.trim();",
+              ),
+            },
+          },
+          { commonjs: true },
+        ),
+      );
+
+      const reaching = COMMONJS_SHAPES.filter((entry) => entry.reachesSeed).map(
+        (entry) => entry.line,
+      );
+
+      // Side one: what the analyzer reported, via go-to-definition.
+      expect(
+        outcome.result.usages
+          .filter((usage) => usage.filePath === "src/use.js")
+          .map((usage) => usage.line)
+          .sort((a, b) => a - b),
+      ).toEqual(reaching);
+
+      // Side two: what the differential check will hold discovery to, via its own symbol
+      // walk. Dropping every usage makes it name the sites it considers references.
+      expect(
+        unexplainedOf(outcome.explain({ ...outcome.result, usages: [] }))
+          .filter((occurrence) => occurrence.filePath === "src/use.js")
+          .map((occurrence) => occurrence.line)
+          .sort((a, b) => a - b),
+      ).toEqual(reaching);
+
+      // And both saw every shape. Without this the agreement could hold because a line
+      // produced nothing at all on either side, which agrees about nothing.
+      const seen = new Set(
+        outcome.occurrences
+          .filter((occurrence) => occurrence.filePath === "src/use.js")
+          .map((occurrence) => occurrence.line),
+      );
+      expect(
+        COMMONJS_SHAPES.filter((entry) => !seen.has(entry.line)).map(
+          (entry) => entry.shape,
+        ),
+      ).toEqual([]);
+    },
+    TIMEOUT_MS,
+  );
+});
+
+describe("the bounds on a CommonJS export target", () => {
+  // Both exclusions in one case, against one seed, so the shapes are compared rather
+  // than each measured alone. `kept` is the control: without a spelling that **is** an
+  // export, a rule that excluded everything would pass both exclusions.
+  const BASE = {
+    "src/lib.js":
+      "function alpha() {\n  return 'a';\n}\n\nfunction beta() {\n  return 'b';\n}\n\nfunction gamma() {\n  return 'c';\n}\n\nfunction makePack() {\n  return { gamma };\n}\n\nconst name = 'beta';\n\nmodule.exports.alpha = alpha;\nmodule.exports[name] = beta;\nmodule.exports.pack = makePack();\n",
+  };
+
+  it(
+    "excludes a computed key and a call result, and keeps a literal path",
+    async () => {
+      // `module.exports[name] = beta` has a computed key, so it names no export. And
+      // `module.exports.pack = makePack()` exports whatever that call returns — a
+      // value-flow question §12 declines everywhere else, so `gamma` is not exported
+      // through it. Only `alpha` is.
+      const outcome = await analyze(
+        await throwawayCase(
+          {
+            base: BASE,
+            head: {
+              // **All three** change, so all three are seeds. With only `alpha`
+              // modified the other two are never searched, and the exclusions this test
+              // names go unexercised — a mutation allowing computed keys passed until
+              // this was fixed.
+              "src/lib.js": BASE["src/lib.js"]
+                .replace("return 'a';", "return 'a'.trim();")
+                .replace("return 'b';", "return 'b'.trim();")
+                .replace("return 'c';", "return 'c'.trim();"),
+            },
+          },
+          { commonjs: true },
+        ),
+      );
+
+      // Exactly one export: the literal path on line 19. Line 20's computed key and
+      // line 21's call result are excluded, so if either counted this would be two or
+      // three. Named per seed, because "one export" alone would also hold if the wrong
+      // one were chosen.
+      expect(
+        outcome.result.filtered
+          .filter((reference) => reference.reason === "export-specifier")
+          .map(
+            (reference) =>
+              `${reference.seedKey.split(" :: ").pop() ?? ""} ${reference.filePath}:${String(reference.line)}`,
+          ),
+      ).toEqual([
+        // Two records on line 19, and both belong to the same export: the property name
+        // on the left of `module.exports.alpha = alpha`, and the function on the right.
+        // The reference search returns only the right one, so the left is filtered
+        // separately — without it that occurrence resolves to the seed and nothing
+        // explains it.
+        "alpha src/lib.js:19",
+        "alpha src/lib.js:19",
+      ]);
+    },
+    TIMEOUT_MS,
   );
 });
 
@@ -1482,7 +1624,9 @@ async function throwawayCase(
   // without them every tag is an error and the references come from a program that did
   // not type-check, which is not the thing the test means to measure. The shim mirrors
   // the one the `layout-*` fixtures use, so the two agree on what a working JSX case is.
-  options: { jsx?: boolean } = {},
+  // `commonjs` switches the case to a CommonJS module: no `"type": "module"`, and the
+  // compiler options a `.js` file needs to be checked as one.
+  options: { jsx?: boolean; commonjs?: boolean } = {},
 ): Promise<string> {
   const caseDir = await mkdtemp(join(tmpdir(), "nidan-references-"));
   cleanups.push(() => rm(caseDir, { recursive: true, force: true }));
@@ -1500,6 +1644,14 @@ async function throwawayCase(
             strict: true,
             noEmit: true,
             ...(options.jsx === true ? JSX_COMPILER_OPTIONS : {}),
+            ...(options.commonjs === true
+              ? {
+                  module: "Node16",
+                  moduleResolution: "Node16",
+                  allowJs: true,
+                  checkJs: true,
+                }
+              : {}),
           },
           include: ["src"],
         },
@@ -1509,7 +1661,13 @@ async function throwawayCase(
     );
     await writeFile(
       join(caseDir, snapshot, "package.json"),
-      `${JSON.stringify({ name: "case", private: true, type: "module" }, null, 2)}\n`,
+      `${JSON.stringify(
+        options.commonjs === true
+          ? { name: "case", private: true }
+          : { name: "case", private: true, type: "module" },
+        null,
+        2,
+      )}\n`,
     );
     for (const [path, contents] of Object.entries(entries)) {
       const absolute = join(caseDir, snapshot, path);

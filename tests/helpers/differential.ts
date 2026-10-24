@@ -61,7 +61,15 @@ export function explainOccurrences(input: DifferentialInput): Occurrence[] {
 
     for (const sourceFile of analyzedFiles(snapshot, input.repoRoot)) {
       const filePath = relativePathOf(sourceFile, input.repoRoot);
-      for (const pos of occurrencesOf(sourceFile.getFullText(), name)) {
+      // The seed's own name, plus any local it was renamed to on the way in. Without the
+      // second, `const { greet: hi } = require(…)` hides every `hi()` from this scan:
+      // there is no `greet` at the call site to find, so a lost usage reads as no usage.
+      // Resolved here by walking binding elements directly — the analyzer answers the
+      // same question its own way (§10).
+      const names = [name, ...renamedLocalsOf(sourceFile, name)];
+      for (const pos of names.flatMap((candidate) =>
+        occurrencesOf(sourceFile.getFullText(), candidate),
+      )) {
         occurrences.push({
           seedKey: seed.key,
           filePath,
@@ -120,6 +128,27 @@ function relativePathOf(sourceFile: SourceFile, repoRoot: string): string {
   return absolute.startsWith(`${root}/`)
     ? absolute.slice(root.length + 1)
     : absolute;
+}
+
+/**
+ * Local names this file binds the seed's export to under a different spelling.
+ *
+ * Only a renamed destructuring produces one: `const { greet: hi } = require(…)`. A
+ * same-named binding needs nothing, and an unrelated local called `hi` is not reached
+ * because the property name must match the seed.
+ */
+function renamedLocalsOf(sourceFile: SourceFile, name: string): string[] {
+  const locals: string[] = [];
+  for (const node of sourceFile.getDescendants()) {
+    if (!Node.isBindingElement(node)) continue;
+    const property = node.getPropertyNameNode();
+    if (property === undefined || property.getText() !== name) continue;
+    const local = node.getNameNode();
+    if (Node.isIdentifier(local) && local.getText() !== name) {
+      locals.push(local.getText());
+    }
+  }
+  return locals;
 }
 
 /**
