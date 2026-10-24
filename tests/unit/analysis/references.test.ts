@@ -363,6 +363,9 @@ const COMMONJS_SHAPES = [
   { line: 10, shape: "destructured binding call", reachesSeed: true },
   { line: 14, shape: "same name, different module", reachesSeed: false },
   { line: 18, shape: "same name, local declaration", reachesSeed: false },
+  // A renamed destructuring. The call is spelled `hi`, so neither side can find it by
+  // the seed's name — both have to learn the local binding, separately.
+  { line: 27, shape: "renamed destructured binding call", reachesSeed: true },
 ] as const;
 
 const COMMONJS_CASE = {
@@ -383,7 +386,11 @@ const COMMONJS_CASE = {
     "\n" +
     "function viaLocal() {\n  function send() {\n    return 'local';\n  }\n  return send();\n}\n" +
     "\n" +
-    "module.exports = { viaNamespace, viaDestructured, viaOtherModule, viaLocal };\n",
+    'const { send: dispatch } = require("./seed.js");\n' +
+    "\n" +
+    "function viaRenamed() {\n  return dispatch();\n}\n" +
+    "\n" +
+    "module.exports = {\n  viaNamespace,\n  viaDestructured,\n  viaOtherModule,\n  viaLocal,\n  viaRenamed,\n};\n",
 };
 
 describe("the analyzer and the differential check agree on CommonJS callers", () => {

@@ -217,9 +217,11 @@ function collectCommonJsCallers(
     if (file === seedFile) continue;
     if (!requiresByLiteral(file)) continue;
 
+    const candidateNames = candidateNamesIn(file, callable.name);
     for (const node of file.getDescendants()) {
-      if (!Node.isIdentifier(node) || node.getText() !== callable.name)
+      if (!Node.isIdentifier(node) || !candidateNames.has(node.getText())) {
         continue;
+      }
       const site = siteOf(node, repoRoot);
       const key = `${site.filePath}:${String(site.pos)}`;
       if (seen.has(key)) continue;
@@ -251,6 +253,30 @@ function collectCommonJsCallers(
       });
     }
   }
+}
+
+/**
+ * Every local name in this file that may stand for the seed.
+ *
+ * The seed's own name, plus the local half of a **renamed** destructuring:
+ * `const { greet: hi } = require(…)` binds `hi`, and `hi()` is a call of the seed. §6.3
+ * lists destructured literal `require` as supported, so missing it loses a usage inside a
+ * supported pattern — and silently, because the occurrence scan searches for `greet` and
+ * there is no `greet` at the call site to find.
+ *
+ * Only the names are collected here. Whether each occurrence really reaches the seed is
+ * still decided by go-to-definition, so a local that merely shares a name is rejected.
+ */
+function candidateNamesIn(file: SourceFile, seedName: string): Set<string> {
+  const names = new Set([seedName]);
+  for (const node of file.getDescendants()) {
+    if (!Node.isBindingElement(node)) continue;
+    const property = node.getPropertyNameNode();
+    if (property === undefined || property.getText() !== seedName) continue;
+    const local = node.getNameNode();
+    if (Node.isIdentifier(local)) names.add(local.getText());
+  }
+  return names;
 }
 
 /** Whether a file contains `require("<literal>")` at all. A cost filter only. */
