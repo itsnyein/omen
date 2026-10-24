@@ -154,8 +154,42 @@ function actualUsages(result: ReferenceResult): string[] {
  */
 const PENDING_FIXTURES = new Map<
   string,
-  { usages: string[]; unexplained: string[] }
+  {
+    usages: string[];
+    unexplained: string[];
+    /**
+     * Set when the fixture still satisfies the repository-wide unexplained sweep.
+     *
+     * Pending does not always mean exempt. A fixture pinning a projection or a gap that
+     * does not exist yet can explain every occurrence perfectly well; only a fixture
+     * whose references are genuinely unexplained may leave the sweep.
+     */
+    inSweep?: true;
+  }
 >([
+  // Both value-reference fixtures stay in the unexplained sweep. The shapes case already
+  // classifies every reference correctly — only the projection is missing — and the
+  // anonymous-default case is unexplained-free for a worse reason: its seed is named
+  // `default`, which appears nowhere at the use sites, so the sweep has no text to scan
+  // for and cannot see the miss at all.
+  [
+    "usage-value-reference-shapes",
+    {
+      usages: [
+        "src/format.ts :: :: function :: formatRow | invoke | src/use.ts :: :: function :: called | src/use.ts:16 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: :: function :: asArgument | src/use.ts:4 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: :: function :: wrapped | src/use.ts:12 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: module | src/use.ts:7 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: module | src/use.ts:9 | exact",
+      ],
+      unexplained: [],
+      inSweep: true,
+    },
+  ],
+  [
+    "usage-value-reference-anonymous-default",
+    { usages: [], unexplained: [], inSweep: true },
+  ],
   [
     "usage-commonjs-require",
     {
@@ -240,7 +274,13 @@ describe("usages against the frozen fixtures", () => {
     TIMEOUT_MS,
   );
 
-  it.each(names.filter((name) => !PENDING_FIXTURES.has(name)))(
+  it.each(
+    names.filter(
+      (name) =>
+        PENDING_FIXTURES.get(name)?.inSweep !== undefined ||
+        !PENDING_FIXTURES.has(name),
+    ),
+  )(
     "%s leaves no occurrence of a seed name unexplained",
     async (name) => {
       const outcome = await analyze(join("tests", "fixtures", name));
