@@ -19,7 +19,7 @@ import {
   unexplainedOf,
   type Occurrence,
 } from "../../helpers/differential.js";
-import { allFixtures } from "../../helpers/fixture-gaps.js";
+import { allFixtures, recordedGaps } from "../../helpers/fixture-gaps.js";
 import { JSX_COMPILER_OPTIONS, writeJsxShim } from "../../helpers/jsx-shim.js";
 import { createFixtureRepo } from "../../helpers/fixture-repo.js";
 
@@ -208,9 +208,13 @@ describe("fixtures whose behaviour is not implemented yet", () => {
           )
           .sort(),
       ).toEqual([...expected.unexplained].sort());
-      // The record is not empty, so this is pending work rather than a fixture that
-      // expects nothing.
-      expect(expectedUsages(name)?.length ?? 0).toBeGreaterThan(0);
+      // The record declares **something** — usages or gaps — so this is pending work
+      // rather than a fixture that expects nothing. Checking usages alone was wrong: a
+      // fixture can be pending on a gap kind while correctly recording no usages at all,
+      // which is exactly the computed-access proposal's shape.
+      expect(
+        (expectedUsages(name)?.length ?? 0) + recordedGaps(name).length,
+      ).toBeGreaterThan(0);
     },
     TIMEOUT_MS,
   );
@@ -234,9 +238,6 @@ describe("usages against the frozen fixtures", () => {
     expect(
       declaring.filter((name) => expectedUsages(name)?.length === 0),
     ).toEqual([
-      // Records `"usages": []` because all four spellings are undiscovered — the empty
-      // list is the assertion the proposal is about.
-      "gap-computed-member-access",
       "identity-default-exports",
       "identity-nested-static-collision",
       "identity-static-vs-instance",
