@@ -168,6 +168,28 @@ const PENDING_FIXTURES = new Map<
     inSweep?: true;
   }
 >([
+  // Both value-reference fixtures stay in the unexplained sweep, for opposite reasons:
+  // the shapes case explains every occurrence correctly, and the anonymous-default case
+  // explains everything only because the sweep cannot see its misses — its seed is named
+  // `default`, which appears nowhere at the use sites.
+  [
+    "usage-value-reference-shapes",
+    {
+      usages: [
+        "src/format.ts :: :: function :: formatRow | invoke | src/use.ts :: :: function :: called | src/use.ts:16 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: :: function :: asArgument | src/use.ts:4 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: :: function :: wrapped | src/use.ts:12 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: module | src/use.ts:7 | exact",
+        "src/format.ts :: :: function :: formatRow | value-reference | src/use.ts :: module | src/use.ts:9 | exact",
+      ],
+      unexplained: [],
+      inSweep: true,
+    },
+  ],
+  [
+    "usage-value-reference-anonymous-default",
+    { usages: [], unexplained: [], inSweep: true },
+  ],
   [
     "usage-commonjs-require",
     {
