@@ -141,6 +141,15 @@ All agents:
   "Planning labels stay in `planning/`". Maintainer-directed governance and configuration changes are the
   only exception (`planning/decisions.md` §9).
 - Never merge your own pull request. The maintainer merges.
+- You may **close a pull request you opened** when a replacement supersedes it, and only
+  then: `gh pr close <N> --comment "Superseded by #<M>"`. The comment is not optional —
+  a closed pull request with no reason is indistinguishable from an abandoned one.
+  Closing anything else, including a pull request you did not open, stays forbidden.
+- **One open pull request at a time per shared test file.** `PENDING` maps and the fixture
+  case table are append-at-the-same-place files: two branches that both add an entry
+  conflict by construction, and a pushed branch cannot be rebased or merged by an agent,
+  so the conflict costs a replacement branch and a new pull request. Open the next one
+  only after the previous merges.
 
 ## Task loop
 
