@@ -119,3 +119,6 @@ can be tightened deliberately.
 | [`gap-interface-dispatch`](gap-interface-dispatch/README.md)                       | Implementing an interface member emits the dispatch gap          |
 | [`gap-override-dispatch`](gap-override-dispatch/README.md)                         | Overriding a base method emits the dispatch gap                  |
 | [`gap-untyped-member-call`](gap-untyped-member-call/README.md)                     | A member call on an `any` receiver emits a gap, not a usage      |
+| [`gap-dynamic-require`](gap-dynamic-require/README.md)                             | Computed and aliased `require` give repo-wide gaps               |
+| [`gap-dynamic-import`](gap-dynamic-import/README.md)                               | A computed `import()` gaps; a literal one still resolves         |
+| [`gap-unresolved-module`](gap-unresolved-module/README.md)                         | An unresolved specifier gaps without losing the file             |
