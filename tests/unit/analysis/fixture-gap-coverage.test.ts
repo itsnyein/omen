@@ -71,6 +71,18 @@ const PENDING = new Map<string, string>([
     "gap-untyped-member-call",
     "untyped-member-call is not implemented: the any-receiver call emits no gap",
   ],
+  [
+    "gap-dynamic-require",
+    "dynamic-require is not implemented: the computed and aliased requires produce no gap",
+  ],
+  [
+    "gap-dynamic-import",
+    "dynamic-import is not implemented: the computed import() produces no gap",
+  ],
+  [
+    "gap-unresolved-module",
+    "unresolved-module is not implemented: the absent package produces no gap",
+  ],
 ]);
 
 describe("every fixture is asserted against its record", () => {
@@ -100,8 +112,11 @@ describe("every fixture is asserted against its record", () => {
     // means adding a fourth fails here until someone justifies it, which is what the
     // empty-map version bought and a bare length check would give away.
     expect([...PENDING.keys()].sort()).toEqual([
+      "gap-dynamic-import",
+      "gap-dynamic-require",
       "gap-interface-dispatch",
       "gap-override-dispatch",
+      "gap-unresolved-module",
       "gap-untyped-member-call",
     ]);
   });
