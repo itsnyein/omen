@@ -1,0 +1,44 @@
+{
+  "description": "The four immediate value uses are projected into valueReferences and the call stays in usages, so a value use is never reported as an invoke.",
+  "expect": {
+    "run": { "status": "ok", "analysisMode": "tsconfig", "reasons": [] },
+    "seeds": [
+      {
+        "key": "src/format.ts :: :: function :: formatRow",
+        "change": "modified",
+        "usages": [
+          {
+            "relation": "invoke",
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: :: function :: called",
+            "site": { "file": "src/use.ts", "line": 16 }
+          }
+        ],
+        "valueReferences": [
+          {
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: :: function :: asArgument",
+            "site": { "file": "src/use.ts", "line": 4 }
+          },
+          {
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: module",
+            "site": { "file": "src/use.ts", "line": 7 }
+          },
+          {
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: module",
+            "site": { "file": "src/use.ts", "line": 9 }
+          },
+          {
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: :: function :: wrapped",
+            "site": { "file": "src/use.ts", "line": 12 }
+          }
+        ],
+        "gaps": []
+      }
+    ],
+    "repoWideGaps": []
+  }
+}

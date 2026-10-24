@@ -1,0 +1,29 @@
+{
+  "description": "An anonymous default export is reached through its export assignment, so its call is reported as a usage and the value use beside it is projected into valueReferences.",
+  "expect": {
+    "run": { "status": "ok", "analysisMode": "tsconfig", "reasons": [] },
+    "seeds": [
+      {
+        "key": "src/panel.ts :: :: function :: default",
+        "change": "modified",
+        "usages": [
+          {
+            "relation": "invoke",
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: :: function :: render",
+            "site": { "file": "src/use.ts", "line": 6 }
+          }
+        ],
+        "valueReferences": [
+          {
+            "resolution": { "status": "exact" },
+            "from": "src/use.ts :: module",
+            "site": { "file": "src/use.ts", "line": 3 }
+          }
+        ],
+        "gaps": []
+      }
+    ],
+    "repoWideGaps": []
+  }
+}
