@@ -162,6 +162,17 @@ function collectForSeed(
 
   const target = targetSpansOf(callable, searchNode);
 
+  collectFromDeclaration(searchNode, target, seed, snapshot, repoRoot, buckets);
+}
+
+function collectFromDeclaration(
+  searchNode: ReferenceSearchNode,
+  target: ReturnType<typeof targetSpansOf>,
+  seed: Seed,
+  snapshot: SnapshotReferences,
+  repoRoot: string,
+  buckets: Buckets,
+): void {
   for (const group of searchNode.findReferences()) {
     const resolution = resolutionOf(group, target, repoRoot);
     for (const entry of group.getReferences()) {
@@ -181,6 +192,19 @@ function collectForSeed(
         );
         continue;
       }
+      // Checked before the generic filters: the shorthand in `module.exports = { x }`
+      // is one of its own symbol's declarations, so the declaration rule would claim it
+      // and report a different reason for one of three spellings of the same thing
+      // (§15b). It is also the handle the second pass searches from.
+      if (isCommonJsExport(node)) {
+        buckets.filtered.push({
+          seedKey: seed.key,
+          reason: "export-specifier",
+          ...site,
+        });
+        continue;
+      }
+
       if (reason !== undefined) {
         buckets.filtered.push({ seedKey: seed.key, reason, ...site });
         continue;
@@ -195,6 +219,67 @@ function collectForSeed(
       });
     }
   }
+}
+
+/**
+ * Whether this reference is one of the three CommonJS export spellings (§6.3).
+ *
+ * `module.exports = { x }`, `module.exports.x = fn`, and `exports.x = fn` are **module
+ * patterns**, not uses of a callable — the CommonJS spelling of `export { x }`, which §9
+ * already filters. All three report the same reason, including the shorthand: it is an
+ * export, not a `declaration`, and reporting one of three spellings differently was the
+ * analyser treating one rule as three (§15b).
+ */
+function isCommonJsExport(node: Node): boolean {
+  const parent = node.getParent();
+  if (parent === undefined) return false;
+
+  if (Node.isShorthandPropertyAssignment(parent)) {
+    return isCommonJsExportTarget(parent.getParent().getParent());
+  }
+  if (Node.isPropertyAssignment(parent) && parent.getInitializer() === node) {
+    return isCommonJsExportTarget(parent.getParent().getParent());
+  }
+  if (
+    Node.isBinaryExpression(parent) &&
+    parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken &&
+    parent.getRight() === node
+  ) {
+    const left = parent.getLeft();
+    return (
+      Node.isPropertyAccessExpression(left) &&
+      isExportsRoot(left.getExpression())
+    );
+  }
+  return false;
+}
+
+/** Whether a node is the `module.exports = …` assignment an object literal belongs to. */
+function isCommonJsExportTarget(node: Node | undefined): boolean {
+  if (node === undefined || !Node.isBinaryExpression(node)) return false;
+  if (node.getOperatorToken().getKind() !== SyntaxKind.EqualsToken)
+    return false;
+  return isExportsRoot(node.getLeft());
+}
+
+/**
+ * An expression rooted at the module's export object.
+ *
+ * `exports`, `module.exports`, and any property path below them — `module.exports.pack`
+ * included. The depth matters because `module.exports.pack = { charlie }` exports
+ * `charlie` as `pack.charlie`: the shorthand there is still the module naming its public
+ * surface, and the approved `usage-commonjs-exports` record expects its call to be found.
+ * Stopping at the bare `module.exports` reported that one shorthand as a `declaration`
+ * while its two siblings were exports, which is the inconsistency §15b rules against.
+ */
+function isExportsRoot(node: Node): boolean {
+  if (Node.isIdentifier(node)) return node.getText() === "exports";
+  if (!Node.isPropertyAccessExpression(node)) return false;
+  const object = node.getExpression();
+  if (Node.isIdentifier(object) && object.getText() === "module") {
+    return node.getName() === "exports";
+  }
+  return isExportsRoot(object);
 }
 
 /**

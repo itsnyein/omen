@@ -234,10 +234,10 @@ const PENDING_FIXTURES = new Map<
   [
     "usage-commonjs-exports",
     {
-      usages: [
-        "src/lib.js :: :: function :: alpha | value-reference | src/lib.js :: module | src/lib.js:13 | exact",
-        "src/lib.js :: :: function :: bravo | value-reference | src/lib.js :: module | src/lib.js:14 | exact",
-      ],
+      // No usages at all now: the three export spellings are filtered rather than
+      // reported as value references. The call sites stay unexplained until the
+      // candidate scan lands, which is what removes this entry and the sweep opt-out.
+      usages: [],
       unexplained: [
         "src/lib.js:13",
         "src/lib.js:14",
